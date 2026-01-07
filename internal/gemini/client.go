@@ -2,56 +2,45 @@ package gemini
 
 import (
 	"context"
-	"fmt"
+	"os"
 
-	aiplatform "cloud.google.com/go/aiplatform/apiv1"
-	"cloud.google.com/go/aiplatform/apiv1/aiplatformpb"
+	"github.com/google/generative-ai-go/genai"
+	"google.golang.org/api/option"
 )
 
 type Client struct {
-	project string
-	region  string
-	model   string
+	model *genai.GenerativeModel
 }
 
-func New(project, region, model string) *Client {
-	return &Client{
-		project: project,
-		region:  region,
-		model:   model,
+func New(modelName string) (*Client, error) {
+	ctx := context.Background()
+
+	c, err := genai.NewClient(
+		ctx,
+		option.WithAPIKey(os.Getenv("GEMINI_API_KEY")),
+	)
+	if err != nil {
+		return nil, err
 	}
+
+	return &Client{
+		model: c.GenerativeModel(modelName),
+	}, nil
 }
 
 func (c *Client) Generate(ctx context.Context, prompt string) (string, error) {
-	client, err := aiplatform.NewPredictionClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.Close()
-
-	endpoint := fmt.Sprintf(
-		"projects/%s/locations/%s/publishers/google/models/%s",
-		c.project,
-		c.region,
-		c.model,
+	resp, err := c.model.GenerateContent(
+		ctx,
+		genai.Text(prompt),
 	)
-
-	req := &aiplatformpb.GenerateContentRequest{
-		Model: endpoint,
-		Contents: []*aiplatformpb.Content{
-			{
-				Role: "user",
-				Parts: []*aiplatformpb.Part{
-					{Data: &aiplatformpb.Part_Text{Text: prompt}},
-				},
-			},
-		},
-	}
-
-	resp, err := client.GenerateContent(ctx, req)
 	if err != nil {
 		return "", err
 	}
 
-	return resp.Candidates[0].Content.Parts[0].GetText(), nil
+	text := resp.Candidates[0].Content.Parts[0].(genai.Text)
+	return string(text), nil
 }
+
+
+
+
