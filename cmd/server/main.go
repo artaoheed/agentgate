@@ -34,29 +34,31 @@ type ChatResponse struct {
 }
 
 func main() {
-	log.Println("=== AgentGate boot with Gemini + PII + Events ===")
+	log.Println("=== AgentGate boot (Gemini + PII + Events) ===")
 
+	// ---- ENV CHECKS ----
 	if os.Getenv("GEMINI_API_KEY") == "" {
 		log.Fatal("GEMINI_API_KEY is not set")
 	}
 
+	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if projectID == "" {
+		projectID = "agent-gate"
+	}
+
+	// ---- CLIENTS ----
 	client, err := gemini.New("gemini-2.5-flash")
 	if err != nil {
 		log.Fatalf("failed to init gemini client: %v", err)
 	}
 
-	// Initialize once
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
-		projectID = "agent-gate" // fallback
-	}
 	ctx := context.Background()
 
 	logEmitter := events.NewLogEmitter()
 
 	pubsubEmitter, err := events.NewPubSubEmitter(
 		ctx,
-		projectID, // project ID
+		projectID,
 		"agentgate-governance-events",
 	)
 	if err != nil {
@@ -70,6 +72,7 @@ func main() {
 		emitter = logEmitter
 	}
 
+	// ---- HTTP HANDLER ----
 	http.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
@@ -109,12 +112,13 @@ func main() {
 
 			chunks, errs := client.Stream(r.Context(), prompt)
 			window := policy.NewRollingWindow(300)
+			charsSinceEval := 0
 
 			for {
 				select {
 				case chunk, ok := <-chunks:
 					if !ok {
-						// normal completion → ALLOW
+						// Normal successful completion
 						emitter.Emit(events.GovernanceEvent{
 							Timestamp: time.Now(),
 							RequestID: requestID,
@@ -131,42 +135,48 @@ func main() {
 					}
 
 					window.Add(chunk.Text)
+					charsSinceEval += len(chunk.Text)
 
-					res := policy.EvaluatePII(window.Text())
-					if res != nil {
-						switch res.Decision {
+					// Throttled policy evaluation
+					if charsSinceEval >= 50 {
+						charsSinceEval = 0
 
-						case policy.Abort:
-							emitter.Emit(events.GovernanceEvent{
-								Timestamp: time.Now(),
-								RequestID: requestID,
-								Model:     "gemini-2.5-flash",
-								Policy:    "pii",
-								Decision:  events.DecisionAbort,
-								Reason:    res.Reason,
-								Streaming: true,
-								LatencyMs: time.Since(start).Milliseconds(),
-							})
+						res := policy.EvaluatePII(window.Text())
+						if res != nil {
+							switch res.Decision {
 
-							w.Write([]byte("data: [BLOCKED: PII DETECTED]\n\n"))
-							flusher.Flush()
-							return
+							case policy.Abort:
+								emitter.Emit(events.GovernanceEvent{
+									Timestamp: time.Now(),
+									RequestID: requestID,
+									Model:     "gemini-2.5-flash",
+									Policy:    "pii",
+									Decision:  events.DecisionAbort,
+									Reason:    res.Reason,
+									Streaming: true,
+									LatencyMs: time.Since(start).Milliseconds(),
+								})
 
-						case policy.Redact:
-							emitter.Emit(events.GovernanceEvent{
-								Timestamp: time.Now(),
-								RequestID: requestID,
-								Model:     "gemini-2.5-flash",
-								Policy:    "pii",
-								Decision:  events.DecisionRedact,
-								Reason:    res.Reason,
-								Streaming: true,
-								LatencyMs: time.Since(start).Milliseconds(),
-							})
+								w.Write([]byte("data: [BLOCKED: PII DETECTED]\n\n"))
+								flusher.Flush()
+								return
 
-							w.Write([]byte("data: [REDACTED]\n\n"))
-							flusher.Flush()
-							continue
+							case policy.Redact:
+								emitter.Emit(events.GovernanceEvent{
+									Timestamp: time.Now(),
+									RequestID: requestID,
+									Model:     "gemini-2.5-flash",
+									Policy:    "pii",
+									Decision:  events.DecisionRedact,
+									Reason:    res.Reason,
+									Streaming: true,
+									LatencyMs: time.Since(start).Milliseconds(),
+								})
+
+								w.Write([]byte("data: [REDACTED]\n\n"))
+								flusher.Flush()
+								continue
+							}
 						}
 					}
 
@@ -175,7 +185,6 @@ func main() {
 
 				case err := <-errs:
 					if err.Error() == "no more items in iterator" {
-
 						log.Println("DEBUG: stream ended via iterator, emitting ALLOW")
 
 						emitter.Emit(events.GovernanceEvent{
@@ -191,11 +200,11 @@ func main() {
 						w.Write([]byte("data: [DONE]\n\n"))
 						flusher.Flush()
 						return
+					}
+
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
 				}
-
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-
 			}
 		}
 
