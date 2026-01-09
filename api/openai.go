@@ -2,6 +2,7 @@ package api
 
 type ChatCompletionRequest struct {
 	Model    string `json:"model"`
+	Stream   bool   `json:"stream"`
 	Messages []struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -9,8 +10,8 @@ type ChatCompletionRequest struct {
 }
 
 type ChatCompletionResponse struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
+	ID     string `json:"id"`
+	Object string `json:"object"`
 	Choices []struct {
 		Message struct {
 			Role    string `json:"role"`
