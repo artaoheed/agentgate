@@ -1,0 +1,10 @@
+[
+  { "name": "timestamp", "type": "TIMESTAMP", "mode": "REQUIRED" },
+  { "name": "request_id", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "model", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "policy", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "decision", "type": "STRING", "mode": "REQUIRED" },
+  { "name": "reason", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "streaming", "type": "BOOLEAN", "mode": "REQUIRED" },
+  { "name": "latency_ms", "type": "INTEGER", "mode": "REQUIRED" }
+]
