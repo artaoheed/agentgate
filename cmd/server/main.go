@@ -120,11 +120,11 @@ func main() {
 					if !ok {
 						// Normal successful completion
 						emitter.Emit(events.GovernanceEvent{
-							Timestamp: time.Now(),
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
 							RequestID: requestID,
 							Model:     "gemini-2.5-flash",
 							Policy:    "none",
-							Decision:  events.DecisionAllow,
+							Decision:  "allow",
 							Streaming: true,
 							LatencyMs: time.Since(start).Milliseconds(),
 						})
@@ -147,11 +147,11 @@ func main() {
 
 							case policy.Abort:
 								emitter.Emit(events.GovernanceEvent{
-									Timestamp: time.Now(),
+									Timestamp: time.Now().UTC().Format(time.RFC3339),
 									RequestID: requestID,
 									Model:     "gemini-2.5-flash",
 									Policy:    "pii",
-									Decision:  events.DecisionAbort,
+									Decision:  "abort",
 									Reason:    res.Reason,
 									Streaming: true,
 									LatencyMs: time.Since(start).Milliseconds(),
@@ -163,11 +163,11 @@ func main() {
 
 							case policy.Redact:
 								emitter.Emit(events.GovernanceEvent{
-									Timestamp: time.Now(),
+									Timestamp: time.Now().UTC().Format(time.RFC3339),
 									RequestID: requestID,
 									Model:     "gemini-2.5-flash",
 									Policy:    "pii",
-									Decision:  events.DecisionRedact,
+									Decision:  "redact",
 									Reason:    res.Reason,
 									Streaming: true,
 									LatencyMs: time.Since(start).Milliseconds(),
@@ -188,11 +188,11 @@ func main() {
 						log.Println("DEBUG: stream ended via iterator, emitting ALLOW")
 
 						emitter.Emit(events.GovernanceEvent{
-							Timestamp: time.Now(),
+							Timestamp: time.Now().UTC().Format(time.RFC3339),
 							RequestID: requestID,
 							Model:     "gemini-2.5-flash",
 							Policy:    "none",
-							Decision:  events.DecisionAllow,
+							Decision:  "allow",
 							Streaming: true,
 							LatencyMs: time.Since(start).Milliseconds(),
 						})
@@ -218,11 +218,11 @@ func main() {
 		}
 
 		emitter.Emit(events.GovernanceEvent{
-			Timestamp: time.Now(),
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			RequestID: requestID,
 			Model:     "gemini-2.5-flash",
 			Policy:    "none",
-			Decision:  events.DecisionAllow,
+			Decision:  "allow",
 			Streaming: false,
 			LatencyMs: time.Since(start).Milliseconds(),
 		})
@@ -248,6 +248,19 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
+	})
+
+	http.HandleFunc("/debug/publish", func(w http.ResponseWriter, r *http.Request) {
+		emitter.Emit(events.GovernanceEvent{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			RequestID: "debug",
+			Model:     "test",
+			Policy:    "test",
+			Decision:  "allow",
+			Streaming: false,
+			LatencyMs: 1,
+		})
+		w.Write([]byte("published"))
 	})
 
 	log.Println("Listening on :8080")
