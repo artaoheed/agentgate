@@ -13,3 +13,4 @@ func (m *MultiEmitter) Emit(event GovernanceEvent) {
 		e.Emit(event)
 	}
 }
+
