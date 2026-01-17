@@ -55,7 +55,6 @@ func main() {
 	ctx := context.Background()
 
 	logEmitter := events.NewLogEmitter()
-
 	pubsubEmitter, err := events.NewPubSubEmitter(
 		ctx,
 		projectID,
@@ -98,8 +97,6 @@ func main() {
 		// STREAMING PATH
 		// =========================
 		if req.Stream {
-			log.Println("DEBUG: entered streaming path")
-
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("Connection", "keep-alive")
@@ -118,16 +115,31 @@ func main() {
 				select {
 				case chunk, ok := <-chunks:
 					if !ok {
-						// Normal successful completion
-						emitter.Emit(events.GovernanceEvent{
-							Timestamp: time.Now().UTC().Format(time.RFC3339),
-							RequestID: requestID,
-							Model:     "gemini-2.5-flash",
-							Policy:    "none",
-							Decision:  "allow",
-							Streaming: true,
-							LatencyMs: time.Since(start).Milliseconds(),
-						})
+						// 🔒 FINAL GUARANTEED POLICY CHECK
+						if res := policy.EvaluatePII(window.Text()); res != nil {
+							// reason := res.Reason
+							emitter.Emit(events.GovernanceEvent{
+								Timestamp: time.Now().UTC().Format(time.RFC3339),
+								RequestID: requestID,
+								Model:     "gemini-2.5-flash",
+								Policy:    "pii",
+								Decision:  string(res.Decision),
+								Reason:    res.Reason,
+								Streaming: true,
+								LatencyMs: time.Since(start).Milliseconds(),
+							})
+						} else {
+							emitter.Emit(events.GovernanceEvent{
+								Timestamp: time.Now().UTC().Format(time.RFC3339),
+								RequestID: requestID,
+								Model:     "gemini-2.5-flash",
+								Policy:    "none",
+								Decision:  "allow",
+								Reason:    "",
+								Streaming: true,
+								LatencyMs: time.Since(start).Milliseconds(),
+							})
+						}
 
 						w.Write([]byte("data: [DONE]\n\n"))
 						flusher.Flush()
@@ -137,15 +149,14 @@ func main() {
 					window.Add(chunk.Text)
 					charsSinceEval += len(chunk.Text)
 
-					// Throttled policy evaluation
+					// ⚡ THROTTLED MID-STREAM CHECK
 					if charsSinceEval >= 50 {
 						charsSinceEval = 0
 
-						res := policy.EvaluatePII(window.Text())
-						if res != nil {
-							switch res.Decision {
+						if res := policy.EvaluatePII(window.Text()); res != nil {
+							// eason := res.Reason
 
-							case policy.Abort:
+							if res.Decision == policy.Abort {
 								emitter.Emit(events.GovernanceEvent{
 									Timestamp: time.Now().UTC().Format(time.RFC3339),
 									RequestID: requestID,
@@ -160,8 +171,9 @@ func main() {
 								w.Write([]byte("data: [BLOCKED: PII DETECTED]\n\n"))
 								flusher.Flush()
 								return
+							}
 
-							case policy.Redact:
+							if res.Decision == policy.Redact {
 								emitter.Emit(events.GovernanceEvent{
 									Timestamp: time.Now().UTC().Format(time.RFC3339),
 									RequestID: requestID,
@@ -179,31 +191,23 @@ func main() {
 							}
 						}
 					}
+					log.Printf("FINAL OUTPUT BUFFER: %q", window.Text())
 
 					w.Write([]byte("data: " + chunk.Text + "\n\n"))
 					flusher.Flush()
 
 				case err := <-errs:
-					if err.Error() == "no more items in iterator" {
-						log.Println("DEBUG: stream ended via iterator, emitting ALLOW")
-
-						emitter.Emit(events.GovernanceEvent{
-							Timestamp: time.Now().UTC().Format(time.RFC3339),
-							RequestID: requestID,
-							Model:     "gemini-2.5-flash",
-							Policy:    "none",
-							Decision:  "allow",
-							Streaming: true,
-							LatencyMs: time.Since(start).Milliseconds(),
-						})
-
-						w.Write([]byte("data: [DONE]\n\n"))
-						flusher.Flush()
+					// Expected when we intentionally abort/redact mid-stream
+					if err.Error() == "context canceled" ||
+						err.Error() == "stream terminated" ||
+						err.Error() == "no more items in iterator" {
 						return
 					}
-
-					http.Error(w, err.Error(), http.StatusInternalServerError)
+					log.Printf("stream error: %v", err)
+					w.Write([]byte("data: [ERROR]\n\n"))
+					flusher.Flush()
 					return
+
 				}
 			}
 		}
@@ -217,7 +221,10 @@ func main() {
 			return
 		}
 
-		emitter.Emit(events.GovernanceEvent{
+		piiRes := policy.EvaluatePII(resp)
+
+		// 2. Prepare the event (defaults to allow)
+		evt := events.GovernanceEvent{
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			RequestID: requestID,
 			Model:     "gemini-2.5-flash",
@@ -225,7 +232,39 @@ func main() {
 			Decision:  "allow",
 			Streaming: false,
 			LatencyMs: time.Since(start).Milliseconds(),
-		})
+		}
+
+		// 3. If PII is found, update event and handle blocking
+		if piiRes != nil {
+			evt.Policy = "pii"
+			evt.Decision = string(piiRes.Decision) // "abort" or "redact"
+			evt.Reason = piiRes.Reason
+
+			if piiRes.Decision == policy.Abort {
+				// Emit the ABORT event
+				emitter.Emit(evt)
+				// Block the HTTP response
+				http.Error(w, "Blocked: PII Detected", http.StatusForbidden)
+				return
+			}
+
+			// If Redact: We accept the decision but (for this simple version)
+			// we assume we just log it and maybe send the content (or you can mask `resp` here)
+			// For now, we allow it through but log it as 'redact' in BigQuery
+		}
+
+		// Emit the final event (Allow or Redact)
+		emitter.Emit(evt)
+
+		// emitter.Emit(events.GovernanceEvent{
+		// 	Timestamp: time.Now().UTC().Format(time.RFC3339),
+		// 	RequestID: requestID,
+		// 	Model:     "gemini-2.5-flash",
+		// 	Policy:    "none",
+		// 	Decision:  "allow",
+		// 	Streaming: false,
+		// 	LatencyMs: time.Since(start).Milliseconds(),
+		// })
 
 		out := ChatResponse{
 			ID:     "agentgate-1",
@@ -248,19 +287,6 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(out)
-	})
-
-	http.HandleFunc("/debug/publish", func(w http.ResponseWriter, r *http.Request) {
-		emitter.Emit(events.GovernanceEvent{
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			RequestID: "debug",
-			Model:     "test",
-			Policy:    "test",
-			Decision:  "allow",
-			Streaming: false,
-			LatencyMs: 1,
-		})
-		w.Write([]byte("published"))
 	})
 
 	log.Println("Listening on :8080")
