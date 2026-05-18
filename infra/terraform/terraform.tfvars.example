@@ -1,0 +1,14 @@
+project_id        = "agent-gate"
+region            = "us-central1"
+env               = "prod"
+github_repository = "OWNER/REPO" # e.g. "artaoheed/agentgate"
+
+# Optional overrides:
+# service_name             = "agentgate"
+# image                    = "gcr.io/cloudrun/hello"   # placeholder until CI/CD pushes a real image
+# pubsub_topic_name        = "agentgate-governance-events"
+# bq_dataset_id            = "agentgate"
+# bq_table_id              = "governance_events"
+# artifact_repo_id         = "agentgate"
+# secret_id_gemini_api_key = "gemini-api-key"
+# allow_public_invoke      = true
