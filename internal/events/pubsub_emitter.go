@@ -3,34 +3,31 @@ package events
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"log/slog"
 
 	"cloud.google.com/go/pubsub"
 )
 
 type PubSubEmitter struct {
-	ctx context.Context
+	ctx    context.Context
 	client *pubsub.Client
 	topic  *pubsub.Topic
+	log    *slog.Logger
 }
 
-
-
-func NewPubSubEmitter(ctx context.Context, projectID, topicID string) (*PubSubEmitter, error) {
+func NewPubSubEmitter(ctx context.Context, projectID, topicID string, log *slog.Logger) (*PubSubEmitter, error) {
 	client, err := pubsub.NewClient(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}
 
-	topic := client.Topic(topicID)
-
 	return &PubSubEmitter{
-		ctx:   ctx,
+		ctx:    ctx,
 		client: client,
-		topic: topic,
+		topic:  client.Topic(topicID),
+		log:    log,
 	}, nil
 }
-
 
 // Close stops the topic publisher (flushing any pending messages) and
 // closes the underlying client. Safe to call once at shutdown.
@@ -42,23 +39,19 @@ func (e *PubSubEmitter) Close() error {
 func (e *PubSubEmitter) Emit(event GovernanceEvent) {
 	b, err := json.Marshal(event)
 	if err != nil {
-		log.Printf("pubsub marshal failed: %v", err)
+		e.log.Error("pubsub marshal failed", "err", err)
 		return
 	}
-
-	log.Printf("DEBUG: publishing governance event to Pub/Sub: %+v", event)
 
 	res := e.topic.Publish(e.ctx, &pubsub.Message{
 		Data: b,
 		Attributes: map[string]string{
 			"policy":   event.Policy,
-			"decision": string(event.Decision),
+			"decision": event.Decision,
 		},
 	})
 
 	if _, err := res.Get(e.ctx); err != nil {
-		log.Printf("pubsub publish failed: %v", err)
-	} else {
-		log.Printf("DEBUG: governance event published successfully")
+		e.log.Error("pubsub publish failed", "err", err, "request_id", event.RequestID)
 	}
 }
