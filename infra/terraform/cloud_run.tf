@@ -39,21 +39,20 @@ resource "google_cloud_run_v2_service" "agentgate" {
         }
       }
 
+      # TCP startup probe (not HTTP /readyz) so the spec applies
+      # cleanly against pre-existing images that may not yet implement
+      # that endpoint. Once a build of the current code is deployed
+      # via CI/CD, switch to an HTTP probe on /readyz, and re-add a
+      # liveness_probe on /healthz (Cloud Run only supports HTTP/gRPC
+      # for liveness, not TCP, so it's omitted entirely here).
       startup_probe {
-        http_get {
-          path = "/readyz"
+        tcp_socket {
+          port = 8080
         }
         initial_delay_seconds = 2
         period_seconds        = 5
         timeout_seconds       = 2
         failure_threshold     = 6
-      }
-
-      liveness_probe {
-        http_get {
-          path = "/healthz"
-        }
-        period_seconds = 30
       }
     }
   }

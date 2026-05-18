@@ -30,9 +30,12 @@ resource "google_pubsub_subscription" "bq_sink" {
   topic = google_pubsub_topic.governance_events.id
 
   bigquery_config {
-    table            = "${var.project_id}.${google_bigquery_dataset.agentgate.dataset_id}.${google_bigquery_table.governance_events.table_id}"
-    write_metadata   = false
-    use_topic_schema = false
+    table = "${var.project_id}.${google_bigquery_dataset.agentgate.dataset_id}.${google_bigquery_table.governance_events.table_id}"
+    # Parse the JSON message payload and map fields onto matching table
+    # columns. The GovernanceEvent struct serialises to exactly the
+    # columns defined in governance_events_schema.json.
+    use_table_schema    = true
+    drop_unknown_fields = true
   }
 
   # Ack deadline matters less for a BigQuery subscription (Pub/Sub

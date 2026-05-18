@@ -39,6 +39,12 @@ variable "bq_dataset_id" {
   default     = "agentgate"
 }
 
+variable "bq_location" {
+  description = "BigQuery dataset location. Defaults to US multi-region; override to a single region (e.g. us-central1) if data residency matters."
+  type        = string
+  default     = "US"
+}
+
 variable "bq_table_id" {
   description = "BigQuery table that Pub/Sub writes governance events into."
   type        = string
