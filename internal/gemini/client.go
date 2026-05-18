@@ -2,7 +2,6 @@ package gemini
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"github.com/artaoheed/agentgate/internal/obs"
@@ -15,12 +14,15 @@ type Client struct {
 	modelName string
 }
 
-func New(modelName string) (*Client, error) {
+// New constructs a Gemini client. The API key is passed in rather than
+// read from env so the caller can resolve it from any source (env,
+// Secret Manager, etc.) before constructing the client.
+func New(modelName, apiKey string) (*Client, error) {
 	ctx := context.Background()
 
 	c, err := genai.NewClient(
 		ctx,
-		option.WithAPIKey(os.Getenv("GEMINI_API_KEY")),
+		option.WithAPIKey(apiKey),
 	)
 	if err != nil {
 		return nil, err

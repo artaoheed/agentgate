@@ -17,6 +17,7 @@ import (
 	"github.com/artaoheed/agentgate/internal/gemini"
 	"github.com/artaoheed/agentgate/internal/obs"
 	"github.com/artaoheed/agentgate/internal/policy"
+	"github.com/artaoheed/agentgate/internal/secrets"
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -45,8 +46,11 @@ func main() {
 	slog.SetDefault(log)
 	log.Info("agentgate boot", "component", "gemini+pii+events")
 
-	if os.Getenv("GEMINI_API_KEY") == "" {
-		log.Error("GEMINI_API_KEY is not set")
+	ctx := context.Background()
+
+	apiKey, err := resolveGeminiKey(ctx, log)
+	if err != nil {
+		log.Error("gemini api key resolution failed", "err", err)
 		os.Exit(1)
 	}
 
@@ -55,13 +59,11 @@ func main() {
 		projectID = "agent-gate"
 	}
 
-	client, err := gemini.New("gemini-2.5-flash")
+	client, err := gemini.New("gemini-2.5-flash", apiKey)
 	if err != nil {
 		log.Error("gemini client init failed", "err", err)
 		os.Exit(1)
 	}
-
-	ctx := context.Background()
 
 	logEmitter := events.NewLogEmitter(log)
 	metricsEmitter := events.NewMetricsEmitter()
@@ -136,6 +138,31 @@ func main() {
 		}
 	}
 	log.Info("server stopped")
+}
+
+// resolveGeminiKey returns the Gemini API key from one of two sources:
+//   1. GEMINI_API_KEY env var (used by Cloud Run via secret_key_ref, and
+//      by local devs who just `export` the key).
+//   2. GEMINI_API_KEY_SECRET env var (a full Secret Manager resource name
+//      like projects/X/secrets/Y/versions/latest) — fetched via
+//      Application Default Credentials.
+// Direct env wins because it's both simpler and what Cloud Run provides.
+func resolveGeminiKey(ctx context.Context, log *slog.Logger) (string, error) {
+	if v := os.Getenv("GEMINI_API_KEY"); v != "" {
+		return v, nil
+	}
+
+	secretRef := os.Getenv("GEMINI_API_KEY_SECRET")
+	if secretRef == "" {
+		return "", errors.New("neither GEMINI_API_KEY nor GEMINI_API_KEY_SECRET is set")
+	}
+
+	log.Info("fetching gemini api key from Secret Manager", "secret", secretRef)
+	b, err := secrets.Fetch(ctx, secretRef)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 // statusRecorder captures the response status for metrics and preserves

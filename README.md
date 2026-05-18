@@ -79,13 +79,28 @@ Gemini API (via Google AI Studio)
 
 ---
 
-## Quick Start
+## Quick Start (local)
+
+Two ways to provide the Gemini API key:
+
+**Option A — direct env var** (simplest):
 
 ```bash
-export GEMINI_API_KEY=...
-export GOOGLE_CLOUD_PROJECT=your-project    # optional; defaults to "agent-gate"
+export GEMINI_API_KEY=...                # from Google AI Studio
+export GOOGLE_CLOUD_PROJECT=your-project # optional; defaults to "agent-gate"
 go run ./cmd/server
 ```
+
+**Option B — fetch from Secret Manager** (no key in your shell history):
+
+```bash
+gcloud auth application-default login
+export GEMINI_API_KEY_SECRET=projects/agent-gate/secrets/gemini-api-key/versions/latest
+export GOOGLE_CLOUD_PROJECT=agent-gate
+go run ./cmd/server
+```
+
+The app prefers `GEMINI_API_KEY` if set, otherwise falls back to fetching the secret named in `GEMINI_API_KEY_SECRET`. Cloud Run uses Option A automatically because Terraform mounts the secret value as `GEMINI_API_KEY`.
 
 Then:
 
@@ -96,3 +111,14 @@ curl -s localhost:8080/v1/chat/completions \
 ```
 
 Add `"stream": true` for SSE.
+
+## Deploy
+
+```bash
+cd infra/bootstrap && terraform init && terraform apply   # one-time state bucket
+cd ../terraform   && terraform init -backend-config="bucket=$PROJECT-agentgate-tfstate" && terraform apply
+echo -n "$GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=-
+curl "$(terraform output -raw cloud_run_url)/healthz"
+```
+
+See [`infra/README.md`](infra/README.md) for the full runbook.
