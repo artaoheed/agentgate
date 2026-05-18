@@ -128,7 +128,7 @@ infra/
    - WIF auth via `google-github-actions/auth@v2` (uses the pool/provider from Phase 2)
    - Build + push image to Artifact Registry, tagged with git SHA
    - `gcloud run deploy` with `--image` and `--region` from repo variables
-   - Smoke test: `curl $(gcloud run services describe ... --format='value(status.url)')/healthz`
+   - Smoke test: `curl $(gcloud run services describe ... --format='value(status.url)')/livez`
 3. `.github/workflows/terraform.yml` — runs on PR touching `infra/**`:
    - `terraform fmt -check`, `terraform validate`, `terraform plan` posted as PR comment
    - On push to `main`: `terraform apply` with manual approval gate (GitHub environment)

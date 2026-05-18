@@ -88,7 +88,7 @@ func main() {
 	var ready atomic.Bool
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})

@@ -63,19 +63,19 @@ jobs:
             --region="${{ vars.GCP_REGION }}" \
             --quiet
 
-      - name: smoke test /healthz
+      - name: smoke test /livez
         run: |
           URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" \
             --region="${{ vars.GCP_REGION }}" --format='value(status.url)')
           echo "Service URL: $URL"
           # Retry up to 6 times in case Cloud Run is still routing traffic.
           for i in 1 2 3 4 5 6; do
-            if curl -fsS --max-time 5 "$URL/healthz" >/dev/null; then
-              echo "healthz OK"
+            if curl -fsS --max-time 5 "$URL/livez" >/dev/null; then
+              echo "livez OK"
               exit 0
             fi
             echo "attempt $i failed, retrying..."
             sleep 5
           done
-          echo "::error::healthz failed after 6 attempts"
+          echo "::error::livez failed after 6 attempts"
           exit 1

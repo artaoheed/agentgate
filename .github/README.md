@@ -5,7 +5,7 @@ Three workflows live here:
 | File | Trigger | What it does |
 |---|---|---|
 | `workflows/ci.yml` | every PR + push to main | gofmt, go vet, staticcheck, race-enabled tests with coverage, Trivy CRITICAL/HIGH scan of a freshly built image |
-| `workflows/deploy.yml` | push to main, manual dispatch | WIF auth → build → push image tagged with git SHA to Artifact Registry → `gcloud run deploy` → smoke test `/healthz` |
+| `workflows/deploy.yml` | push to main, manual dispatch | WIF auth → build → push image tagged with git SHA to Artifact Registry → `gcloud run deploy` → smoke test `/livez` |
 | `workflows/terraform.yml` | PRs that touch `infra/**` | `terraform fmt -check`, `terraform validate` against both modules |
 
 ## First-time setup

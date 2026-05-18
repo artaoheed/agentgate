@@ -54,10 +54,12 @@ echo -n "$GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-fi
 
 ```bash
 terraform output cloud_run_url
-curl "$(terraform output -raw cloud_run_url)/healthz"
+curl "$(terraform output -raw cloud_run_url)/livez"
 ```
 
 You should see `ok`. (Note: `/readyz` will return 503 until the deployed container starts — the placeholder `gcr.io/cloudrun/hello` image doesn't implement it. After CI/CD pushes a real AgentGate image, `/readyz` will return 200.)
+
+Liveness is `/livez` rather than `/healthz` because Google's edge intercepts `/healthz` on the default `*.run.app` domain and the request never reaches the container.
 
 ## Outputs to feed into GitHub Actions
 

@@ -76,7 +76,7 @@ Add `"stream": true` for SSE.
 cd infra/bootstrap && terraform init && terraform apply   # one-time state bucket
 cd ../terraform   && terraform init -backend-config="bucket=$PROJECT-agentgate-tfstate" && terraform apply
 echo -n "$GEMINI_API_KEY" | gcloud secrets versions add gemini-api-key --data-file=-
-curl "$(terraform output -raw cloud_run_url)/healthz"
+curl "$(terraform output -raw cloud_run_url)/livez"
 ```
 
 Full Terraform walkthrough: [`infra/README.md`](infra/README.md). CI/CD wiring (Workload Identity Federation, repo variables): [`.github/README.md`](.github/README.md). Ops procedures: [`docs/RUNBOOK.md`](docs/RUNBOOK.md).
@@ -102,7 +102,7 @@ Full Terraform walkthrough: [`infra/README.md`](infra/README.md). CI/CD wiring (
 - Pub/Sub → BigQuery subscription writes events straight into a partitioned table (`governance_events_schema.json` is the single source of truth shared with the Go struct).
 
 ### 🛠 Operability
-- `/healthz` (liveness), `/readyz` (atomic-gated startup), `/metrics` (Prometheus).
+- `/livez` (liveness), `/readyz` (atomic-gated startup), `/metrics` (Prometheus). Liveness is `/livez` rather than the conventional `/healthz` because Google's edge intercepts `/healthz` on the default `*.run.app` domain.
 - Graceful shutdown on SIGINT/SIGTERM; flushes the Pub/Sub publisher on exit.
 - Structured JSON logs (`log/slog`); every per-request line carries `request_id`.
 
@@ -112,7 +112,7 @@ Full Terraform walkthrough: [`infra/README.md`](infra/README.md). CI/CD wiring (
 
 ### 🚀 CI/CD
 - **`ci.yml`** — gofmt, go vet, staticcheck, race-enabled tests + coverage, Trivy CRITICAL/HIGH image scan.
-- **`deploy.yml`** — WIF-authenticated build → push to Artifact Registry → Cloud Run revision → smoke test `/healthz`. No static credentials in GitHub.
+- **`deploy.yml`** — WIF-authenticated build → push to Artifact Registry → Cloud Run revision → smoke test `/livez`. No static credentials in GitHub.
 - **`terraform.yml`** — fmt + validate on every infra PR.
 
 ---

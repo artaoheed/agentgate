@@ -19,7 +19,7 @@ Operational reference for the AgentGate service. Written so someone on-call at 3
 
 ## Deploy
 
-Standard path: merge to `main`. The `deploy` GitHub workflow builds the image, pushes to Artifact Registry tagged with the commit SHA, deploys a new Cloud Run revision, and smoke-tests `/healthz`.
+Standard path: merge to `main`. The `deploy` GitHub workflow builds the image, pushes to Artifact Registry tagged with the commit SHA, deploys a new Cloud Run revision, and smoke-tests `/livez`.
 
 If you need to deploy a specific commit out-of-band:
 
@@ -152,7 +152,7 @@ Most likely causes:
 |---|---|---|
 | `gemini generate failed` | upstream Gemini error | check AI Studio status; check key validity; check quota |
 | `pubsub publish failed` | Pub/Sub auth or quota | check runtime SA has `pubsub.publisher`; check Pub/Sub quota |
-| connection refused on healthz | container failed to start | check Cloud Run revision logs at startup |
+| connection refused on livez | container failed to start | check Cloud Run revision logs at startup |
 
 ## Tail logs
 
