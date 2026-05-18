@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/artaoheed/agentgate/internal/events"
@@ -71,8 +74,15 @@ func main() {
 		emitter = logEmitter
 	}
 
-	// ---- HTTP HANDLER ----
-	http.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
+	// ---- HTTP HANDLERS ----
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	mux.HandleFunc("/v1/chat/completions", func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
 		requestID := r.Header.Get("X-Request-Id")
@@ -113,6 +123,9 @@ func main() {
 
 			for {
 				select {
+				case <-r.Context().Done():
+					return
+
 				case chunk, ok := <-chunks:
 					if !ok {
 						// 🔒 FINAL GUARANTEED POLICY CHECK
@@ -185,6 +198,10 @@ func main() {
 									LatencyMs: time.Since(start).Milliseconds(),
 								})
 
+								// Mask matched span in the window so the same
+								// hit doesn't re-fire on the next eval.
+								window.Mask(res.Matches)
+
 								w.Write([]byte("data: [REDACTED]\n\n"))
 								flusher.Flush()
 								continue
@@ -198,7 +215,8 @@ func main() {
 
 				case err := <-errs:
 					// Expected when we intentionally abort/redact mid-stream
-					if err.Error() == "context canceled" ||
+					// or the client disconnects.
+					if errors.Is(err, context.Canceled) ||
 						err.Error() == "stream terminated" ||
 						err.Error() == "no more items in iterator" {
 						return
@@ -230,41 +248,28 @@ func main() {
 			Model:     "gemini-2.5-flash",
 			Policy:    "none",
 			Decision:  "allow",
+			Reason:    "",
 			Streaming: false,
 			LatencyMs: time.Since(start).Milliseconds(),
 		}
 
-		// 3. If PII is found, update event and handle blocking
 		if piiRes != nil {
 			evt.Policy = "pii"
-			evt.Decision = string(piiRes.Decision) // "abort" or "redact"
+			evt.Decision = string(piiRes.Decision)
 			evt.Reason = piiRes.Reason
 
 			if piiRes.Decision == policy.Abort {
-				// Emit the ABORT event
 				emitter.Emit(evt)
-				// Block the HTTP response
 				http.Error(w, "Blocked: PII Detected", http.StatusForbidden)
 				return
 			}
 
-			// If Redact: We accept the decision but (for this simple version)
-			// we assume we just log it and maybe send the content (or you can mask `resp` here)
-			// For now, we allow it through but log it as 'redact' in BigQuery
+			if piiRes.Decision == policy.Redact {
+				resp = policy.RedactSpans(resp, piiRes.Matches)
+			}
 		}
 
-		// Emit the final event (Allow or Redact)
 		emitter.Emit(evt)
-
-		// emitter.Emit(events.GovernanceEvent{
-		// 	Timestamp: time.Now().UTC().Format(time.RFC3339),
-		// 	RequestID: requestID,
-		// 	Model:     "gemini-2.5-flash",
-		// 	Policy:    "none",
-		// 	Decision:  "allow",
-		// 	Streaming: false,
-		// 	LatencyMs: time.Since(start).Milliseconds(),
-		// })
 
 		out := ChatResponse{
 			ID:     "agentgate-1",
@@ -289,6 +294,33 @@ func main() {
 		json.NewEncoder(w).Encode(out)
 	})
 
-	log.Println("Listening on :8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	// ---- SERVER + GRACEFUL SHUTDOWN ----
+	srv := &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	go func() {
+		log.Println("Listening on :8080")
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	log.Println("shutdown signal received")
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
+	if pubsubEmitter != nil {
+		if err := pubsubEmitter.Close(); err != nil {
+			log.Printf("pubsub close error: %v", err)
+		}
+	}
+	log.Println("server stopped")
 }
