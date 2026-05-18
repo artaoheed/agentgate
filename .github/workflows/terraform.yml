@@ -1,0 +1,50 @@
+name: terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'infra/**'
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module: [terraform, bootstrap]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.8
+          terraform_wrapper: false
+
+      - name: fmt check
+        working-directory: infra/${{ matrix.module }}
+        run: terraform fmt -check -recursive
+
+      - name: init (no backend)
+        working-directory: infra/${{ matrix.module }}
+        run: terraform init -backend=false
+
+      - name: validate
+        working-directory: infra/${{ matrix.module }}
+        run: terraform validate
+
+  # NOTE: `terraform plan` requires read access to the live project state
+  # bucket plus viewer roles on every resource type touched. Adding those
+  # to the CI/CD SA would broaden its blast radius beyond what's needed
+  # for app deploys. For now `terraform apply` is run locally; revisit
+  # by adding a separate read-only SA when this becomes a bottleneck.
