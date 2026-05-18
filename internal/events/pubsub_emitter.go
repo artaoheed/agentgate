@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"log/slog"
 
-	"cloud.google.com/go/pubsub"
+	"cloud.google.com/go/pubsub/v2"
 )
 
 type PubSubEmitter struct {
-	ctx    context.Context
-	client *pubsub.Client
-	topic  *pubsub.Topic
-	log    *slog.Logger
+	ctx       context.Context
+	client    *pubsub.Client
+	publisher *pubsub.Publisher
+	log       *slog.Logger
 }
 
 func NewPubSubEmitter(ctx context.Context, projectID, topicID string, log *slog.Logger) (*PubSubEmitter, error) {
@@ -22,17 +22,17 @@ func NewPubSubEmitter(ctx context.Context, projectID, topicID string, log *slog.
 	}
 
 	return &PubSubEmitter{
-		ctx:    ctx,
-		client: client,
-		topic:  client.Topic(topicID),
-		log:    log,
+		ctx:       ctx,
+		client:    client,
+		publisher: client.Publisher(topicID),
+		log:       log,
 	}, nil
 }
 
-// Close stops the topic publisher (flushing any pending messages) and
-// closes the underlying client. Safe to call once at shutdown.
+// Close stops the publisher (flushing any pending messages) and closes
+// the underlying client. Safe to call once at shutdown.
 func (e *PubSubEmitter) Close() error {
-	e.topic.Stop()
+	e.publisher.Stop()
 	return e.client.Close()
 }
 
@@ -43,7 +43,7 @@ func (e *PubSubEmitter) Emit(event GovernanceEvent) {
 		return
 	}
 
-	res := e.topic.Publish(e.ctx, &pubsub.Message{
+	res := e.publisher.Publish(e.ctx, &pubsub.Message{
 		Data: b,
 		Attributes: map[string]string{
 			"policy":   event.Policy,
