@@ -141,11 +141,12 @@ func main() {
 }
 
 // resolveGeminiKey returns the Gemini API key from one of two sources:
-//   1. GEMINI_API_KEY env var (used by Cloud Run via secret_key_ref, and
-//      by local devs who just `export` the key).
-//   2. GEMINI_API_KEY_SECRET env var (a full Secret Manager resource name
-//      like projects/X/secrets/Y/versions/latest) — fetched via
-//      Application Default Credentials.
+//  1. GEMINI_API_KEY env var (used by Cloud Run via secret_key_ref, and
+//     by local devs who just `export` the key).
+//  2. GEMINI_API_KEY_SECRET env var (a full Secret Manager resource name
+//     like projects/X/secrets/Y/versions/latest) — fetched via
+//     Application Default Credentials.
+//
 // Direct env wins because it's both simpler and what Cloud Run provides.
 func resolveGeminiKey(ctx context.Context, log *slog.Logger) (string, error) {
 	if v := os.Getenv("GEMINI_API_KEY"); v != "" {

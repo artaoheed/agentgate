@@ -10,8 +10,8 @@ type ChatCompletionRequest struct {
 }
 
 type ChatCompletionResponse struct {
-	ID     string `json:"id"`
-	Object string `json:"object"`
+	ID      string `json:"id"`
+	Object  string `json:"object"`
 	Choices []struct {
 		Message struct {
 			Role    string `json:"role"`

@@ -14,7 +14,9 @@ import (
 
 // Fetch returns the payload of the given secret version. resourceName
 // must be a full resource path of the form
-//   projects/{project}/secrets/{secret}/versions/{version}
+//
+//	projects/{project}/secrets/{secret}/versions/{version}
+//
 // e.g. "projects/agent-gate/secrets/gemini-api-key/versions/latest".
 //
 // Authentication uses Application Default Credentials. The returned
