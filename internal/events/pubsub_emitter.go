@@ -32,6 +32,13 @@ func NewPubSubEmitter(ctx context.Context, projectID, topicID string) (*PubSubEm
 }
 
 
+// Close stops the topic publisher (flushing any pending messages) and
+// closes the underlying client. Safe to call once at shutdown.
+func (e *PubSubEmitter) Close() error {
+	e.topic.Stop()
+	return e.client.Close()
+}
+
 func (e *PubSubEmitter) Emit(event GovernanceEvent) {
 	b, err := json.Marshal(event)
 	if err != nil {
