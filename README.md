@@ -1,66 +1,58 @@
 # AgentGate
 
-**AgentGate** is a high-performance, production-grade gateway for Gemini-powered applications. It intercepts, evaluates, and safeguards LLM traffic in real time—before responses reach users—while preserving low latency, streaming performance, and an excellent developer experience.
+**AgentGate** is a Gemini-first gateway in Go that sits between your application and the Gemini API, evaluating responses for PII before they reach users and emitting structured governance events for downstream analytics.
 
-AgentGate is designed for teams building serious AI products on **Google AI Studio and the Gemini API** who need safety, observability, and control without slowing developers down.
-
----
-
-## Why AgentGate Exists
-
-As LLMs move from demos to production systems, teams face new challenges:
-
-- Preventing **PII leaks and unsafe outputs**
-- Enforcing **usage and policy controls** at runtime
-- Observing **what models are doing in real systems**
-- Maintaining **low latency and streaming UX**
-
-Most teams solve this ad-hoc in application code. AgentGate centralizes these concerns into a single, fast, and extensible gateway—so developers can focus on building products, not guardrails.
+It's built for teams running Gemini in production who need safety and auditability without giving up streaming UX.
 
 ---
 
 ## Why Gemini + Google AI Studio
 
-AgentGate is built **Gemini-first**, intentionally—not by accident.
+AgentGate is built **Gemini-first**, intentionally.
 
 - Native support for **Gemini streaming APIs**
 - Optimized for **Gemini Flash and Gemini Pro**
 - Designed around **Google AI Studio workflows**
-- Seamless deployment on **GCP (GKE, Cloud Run, Pub/Sub, IAM)**
-
-This makes AgentGate a natural fit for teams standardizing on Google’s AI stack.
+- Built to deploy on **GCP (Cloud Run, Pub/Sub, BigQuery)**
 
 ---
 
-## Core Capabilities
+## Shipped Today
 
-### 🔐 Real-Time Safety & Policy Enforcement
-- PII detection and redaction
-- Prompt and response validation
-- Custom policy hooks (sync + async)
-- Block, modify, or annotate responses before delivery
+### 🔐 Response-side PII enforcement
+- Regex-based detection for **email** (Abort) and **phone numbers** (Redact)
+- Rolling 300-char window so matches that span chunk boundaries are caught mid-stream
+- Throttled mid-stream checks (~every 50 chars) plus a guaranteed final check on stream close
+- Matched spans are masked in the buffer so a single hit doesn't re-fire on the next evaluation
 
-### ⚡ High-Performance Streaming Gateway
-- Non-blocking request path
-- Token-level streaming passthrough
-- Sub-second overhead under load
-- Designed for concurrent, multi-tenant workloads
+### ⚡ Streaming gateway
+- OpenAI-compatible `/v1/chat/completions` endpoint (request + response shape)
+- SSE streaming passthrough with per-chunk policy evaluation
+- Client-disconnect handling via `<-ctx.Done()`
 
-### 🧠 Semantic Caching
-- Cache Gemini responses using embeddings
-- Reduce cost and latency for repeated queries
-- Pluggable backends (Redis / Vector DBs)
+### 📊 Governance event emission
+- Structured `GovernanceEvent` (request ID, model, policy, decision, reason, latency, streaming flag)
+- Multi-emitter: stdout log + Google Cloud Pub/Sub, fans out per event
+- BigQuery-compatible schema (`governance_events_schema.json`) for downstream analytics
+- Graceful degrade to log-only if Pub/Sub init fails
 
-### 📊 Observability & Auditability
-- Structured governance events
-- Asynchronous logging (Kafka / Pub/Sub)
-- Queryable analytics (ClickHouse-style schema)
-- Designed for compliance and post-hoc analysis
+### 🛠 Operability
+- `/healthz` liveness endpoint
+- Graceful shutdown on SIGINT/SIGTERM, flushes Pub/Sub publisher
+- Distroless container image, Go 1.24
 
-### 🧩 Extensible by Design
-- Modular middleware architecture
-- Easy to add new evaluators (safety, cost, relevance)
-- Works as a drop-in proxy for existing Gemini apps
+---
+
+## Roadmap
+
+These are described in the project pitch but **not yet implemented**.
+
+- **Prompt-side validation** — today only model responses are evaluated; user prompts pass through unchecked.
+- **Custom policy hooks (sync + async)** — the policy layer is currently a hardcoded PII evaluator. A pluggable `Hook` interface would let teams add their own evaluators (safety, cost, relevance) without forking.
+- **Semantic caching** — embedding-based response cache (Redis / vector backend) to cut cost and latency on repeated queries.
+- **Modular middleware chain** — the handler is currently a single inline function; a middleware architecture would make hooks, auth, rate limiting, and metrics composable.
+
+Other gaps worth flagging: no auth, no rate limiting, no `/metrics` endpoint, no request body size limit, model name is hardcoded (`gemini-2.5-flash`).
 
 ---
 
@@ -71,16 +63,36 @@ Client
   │
   ▼
 AgentGate (Go)
-  ├─ Safety & Policy Engine
-  ├─ Semantic Cache
-  ├─ Streaming Controller
+  ├─ Policy Engine  (PII: email→abort, phone→redact)
+  ├─ Streaming Controller  (rolling window + throttled checks)
   ├─ Async Event Emitter
   │        │
   │        ▼
-  │   Kafka / Pub/Sub
+  │   Pub/Sub
   │        │
   │        ▼
-  │   Analytics Store
+  │   BigQuery
   │
   ▼
 Gemini API (via Google AI Studio)
+```
+
+---
+
+## Quick Start
+
+```bash
+export GEMINI_API_KEY=...
+export GOOGLE_CLOUD_PROJECT=your-project    # optional; defaults to "agent-gate"
+go run ./cmd/server
+```
+
+Then:
+
+```bash
+curl -s localhost:8080/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"messages":[{"role":"user","content":"say hi"}]}'
+```
+
+Add `"stream": true` for SSE.
