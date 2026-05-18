@@ -1,0 +1,81 @@
+name: deploy
+
+# Required GitHub repository variables (Settings -> Secrets and variables -> Actions -> Variables):
+#   GCP_PROJECT_ID     e.g. "agent-gate"
+#   GCP_REGION         e.g. "us-central1"
+#   GCP_WIF_PROVIDER   from `terraform output -raw wif_provider`
+#                      (format: projects/<num>/locations/global/workloadIdentityPools/<pool>/providers/<provider>)
+#   GCP_CICD_SA        from `terraform output -raw cicd_service_account`
+#                      (format: agentgate-cicd@<project>.iam.gserviceaccount.com)
+#   ARTIFACT_REPO      from `terraform output -raw artifact_registry_repo`
+#                      (format: <region>-docker.pkg.dev/<project>/<repo>)
+#   CLOUD_RUN_SERVICE  e.g. "agentgate"
+#
+# No secrets required: authentication uses Workload Identity Federation.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # required for OIDC token used by WIF
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: authenticate to GCP via WIF
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_CICD_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: docker auth to Artifact Registry
+        run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+
+      - name: build and push image
+        env:
+          IMAGE: ${{ vars.ARTIFACT_REPO }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+
+      - name: deploy Cloud Run revision
+        env:
+          IMAGE: ${{ vars.ARTIFACT_REPO }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
+        run: |
+          gcloud run deploy "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --image="$IMAGE" \
+            --region="${{ vars.GCP_REGION }}" \
+            --quiet
+
+      - name: smoke test /healthz
+        run: |
+          URL=$(gcloud run services describe "${{ vars.CLOUD_RUN_SERVICE }}" \
+            --region="${{ vars.GCP_REGION }}" --format='value(status.url)')
+          echo "Service URL: $URL"
+          # Retry up to 6 times in case Cloud Run is still routing traffic.
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS --max-time 5 "$URL/healthz" >/dev/null; then
+              echo "healthz OK"
+              exit 0
+            fi
+            echo "attempt $i failed, retrying..."
+            sleep 5
+          done
+          echo "::error::healthz failed after 6 attempts"
+          exit 1
