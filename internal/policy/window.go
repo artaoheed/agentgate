@@ -19,3 +19,10 @@ func (w *RollingWindow) Add(text string) {
 func (w *RollingWindow) Text() string {
 	return w.buf
 }
+
+// Mask replaces the given byte spans in the current buffer with '*'. Use
+// this after a Redact decision so the same match isn't re-detected on the
+// next evaluation.
+func (w *RollingWindow) Mask(matches [][]int) {
+	w.buf = RedactSpans(w.buf, matches)
+}
