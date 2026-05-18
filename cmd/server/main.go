@@ -119,7 +119,6 @@ func main() {
 
 			chunks, errs := client.Stream(r.Context(), prompt)
 			window := policy.NewRollingWindow(300)
-			charsSinceEval := 0
 
 			for {
 				select {
@@ -160,55 +159,47 @@ func main() {
 					}
 
 					window.Add(chunk.Text)
-					charsSinceEval += len(chunk.Text)
 
-					// ⚡ THROTTLED MID-STREAM CHECK
-					if charsSinceEval >= 50 {
-						charsSinceEval = 0
+					// Evaluate every chunk before flushing it to the wire.
+					// Throttling here would leak short payloads that finish
+					// under the threshold (e.g. a 25-char phone reply).
+					if res := policy.EvaluatePII(window.Text()); res != nil {
+						if res.Decision == policy.Abort {
+							emitter.Emit(events.GovernanceEvent{
+								Timestamp: time.Now().UTC().Format(time.RFC3339),
+								RequestID: requestID,
+								Model:     "gemini-2.5-flash",
+								Policy:    "pii",
+								Decision:  "abort",
+								Reason:    res.Reason,
+								Streaming: true,
+								LatencyMs: time.Since(start).Milliseconds(),
+							})
 
-						if res := policy.EvaluatePII(window.Text()); res != nil {
-							// eason := res.Reason
+							w.Write([]byte("data: [BLOCKED: PII DETECTED]\n\n"))
+							flusher.Flush()
+							return
+						}
 
-							if res.Decision == policy.Abort {
-								emitter.Emit(events.GovernanceEvent{
-									Timestamp: time.Now().UTC().Format(time.RFC3339),
-									RequestID: requestID,
-									Model:     "gemini-2.5-flash",
-									Policy:    "pii",
-									Decision:  "abort",
-									Reason:    res.Reason,
-									Streaming: true,
-									LatencyMs: time.Since(start).Milliseconds(),
-								})
+						if res.Decision == policy.Redact {
+							emitter.Emit(events.GovernanceEvent{
+								Timestamp: time.Now().UTC().Format(time.RFC3339),
+								RequestID: requestID,
+								Model:     "gemini-2.5-flash",
+								Policy:    "pii",
+								Decision:  "redact",
+								Reason:    res.Reason,
+								Streaming: true,
+								LatencyMs: time.Since(start).Milliseconds(),
+							})
 
-								w.Write([]byte("data: [BLOCKED: PII DETECTED]\n\n"))
-								flusher.Flush()
-								return
-							}
+							window.Mask(res.Matches)
 
-							if res.Decision == policy.Redact {
-								emitter.Emit(events.GovernanceEvent{
-									Timestamp: time.Now().UTC().Format(time.RFC3339),
-									RequestID: requestID,
-									Model:     "gemini-2.5-flash",
-									Policy:    "pii",
-									Decision:  "redact",
-									Reason:    res.Reason,
-									Streaming: true,
-									LatencyMs: time.Since(start).Milliseconds(),
-								})
-
-								// Mask matched span in the window so the same
-								// hit doesn't re-fire on the next eval.
-								window.Mask(res.Matches)
-
-								w.Write([]byte("data: [REDACTED]\n\n"))
-								flusher.Flush()
-								continue
-							}
+							w.Write([]byte("data: [REDACTED]\n\n"))
+							flusher.Flush()
+							continue
 						}
 					}
-					log.Printf("FINAL OUTPUT BUFFER: %q", window.Text())
 
 					w.Write([]byte("data: " + chunk.Text + "\n\n"))
 					flusher.Flush()
